@@ -33,12 +33,12 @@ pub mod race_solana {
         require!(pool.is_active, ErrorCode::RaceNotActive);
         require!(!pool.participants.contains(&player), ErrorCode::AlreadyJoined);
 
-        // Exchange SOL for RACE tokens
+        // Transfer SOL from player to pool
         anchor_lang::system_program::transfer(
             CpiContext::new(
                 ctx.accounts.system_program.to_account_info(),
                 anchor_lang::system_program::Transfer {
-                    from: ctx.accounts.player_sol_account.to_account_info(),
+                    from: ctx.accounts.player.to_account_info(),
                     to: ctx.accounts.pool_sol_account.to_account_info(),
                 },
             ),
@@ -52,7 +52,13 @@ pub mod race_solana {
             authority: ctx.accounts.race_pool.to_account_info(),
         };
         let cpi_program = ctx.accounts.token_program.to_account_info();
-        let cpi_ctx = CpiContext::new(cpi_program, cpi_accounts);
+        let seeds = &[
+            b"race_pool".as_ref(),
+            // &[*ctx.bumps.get("race_pool").unwrap()],
+            &[ctx.bumps.race_pool],
+        ];
+        let signer_seeds = &[&seeds[..]];
+        let cpi_ctx = CpiContext::new_with_signer(cpi_program, cpi_accounts, signer_seeds);
         token::mint_to(cpi_ctx, pool.entry_amount)?;
 
         pool.participants.push(player);
@@ -62,32 +68,12 @@ pub mod race_solana {
 
     pub fn end_race(ctx: Context<EndRace>, winners: Vec<Pubkey>) -> Result<()> {
         let pool = &mut ctx.accounts.pool;
-        // let race_pool = &ctx.accounts.race_pool;
 
         require!(pool.is_active, ErrorCode::RaceNotActive);
         require!(!winners.is_empty(), ErrorCode::NoWinners);
         require!(winners.len() <= pool.participants.len(), ErrorCode::TooManyWinners);
 
-        #[allow(unused_variables)]
-        let total_reward = pool.entry_amount * pool.participants.len() as u64;
-
-        // match winners.len() {
-        //     1 => {
-        //         distribute_reward(ctx, winners[0], (total_reward * 90) / 100)?;
-        //         distribute_reward(ctx, race_pool.burn_wallet, (total_reward * 10) / 100)?;
-        //     }
-        //     2 => {
-        //         distribute_reward(ctx, winners[0], (total_reward * 60) / 100)?;
-        //         distribute_reward(ctx, winners[1], (total_reward * 30) / 100)?;
-        //         distribute_reward(ctx, race_pool.burn_wallet, (total_reward * 10) / 100)?;
-        //     }
-        //     _ => {
-        //         distribute_reward(ctx, winners[0], (total_reward * 50) / 100)?;
-        //         distribute_reward(ctx, winners[1], (total_reward * 25) / 100)?;
-        //         distribute_reward(ctx, winners[2], (total_reward * 15) / 100)?;
-        //         distribute_reward(ctx, race_pool.burn_wallet, (total_reward * 10) / 100)?;
-        //     }
-        // }
+        // Implement reward distribution logic here
 
         pool.is_active = false;
         pool.participants.clear();
@@ -98,7 +84,13 @@ pub mod race_solana {
 
 #[derive(Accounts)]
 pub struct Initialize<'info> {
-    #[account(init, payer = authority, space = 8 + 32 + 32)]
+    #[account(
+        init,
+        payer = authority,
+        space = 8 + 32 + 32,
+        seeds = [b"race_pool"],
+        bump
+    )]
     pub race_pool: Account<'info, RacePool>,
     #[account(mut)]
     pub authority: Signer<'info>,
@@ -109,7 +101,7 @@ pub struct Initialize<'info> {
 
 #[derive(Accounts)]
 pub struct CreatePool<'info> {
-    #[account(mut)]
+    #[account(mut, seeds = [b"race_pool"], bump)]
     pub race_pool: Account<'info, RacePool>,
     #[account(init, payer = authority, space = 8 + 8 + 32 * 100 + 1)]
     pub pool: Account<'info, Pool>,
@@ -125,11 +117,9 @@ pub struct JoinRace<'info> {
     #[account(mut)]
     pub player: Signer<'info>,
     #[account(mut)]
-    /// CHECK:
-    pub player_sol_account: AccountInfo<'info>,
-    #[account(mut)]
-    /// CHECK:
+    /// CHECK: This is the pool's SOL account
     pub pool_sol_account: AccountInfo<'info>,
+    #[account(seeds = [b"race_pool"], bump)]
     pub race_pool: Account<'info, RacePool>,
     #[account(mut)]
     pub race_mint: Account<'info, Mint>,
@@ -141,16 +131,13 @@ pub struct JoinRace<'info> {
 
 #[derive(Accounts)]
 pub struct EndRace<'info> {
-    #[account(mut)]
+    #[account(mut, seeds = [b"race_pool"], bump)]
     pub race_pool: Account<'info, RacePool>,
     #[account(mut)]
     pub pool: Account<'info, Pool>,
     #[account(mut)]
-    /// CHECK:
+    /// CHECK: This is the pool's SOL account
     pub pool_sol_account: AccountInfo<'info>,
-    /// CHECK: This is not dangerous because we don't read or write from this account
-    #[account(mut)]
-    pub winner_sol_account: AccountInfo<'info>,
     pub system_program: Program<'info, System>,
 }
 
@@ -180,15 +167,3 @@ pub enum ErrorCode {
     #[msg("Invalid entry amount")]
     InvalidEntryAmount,
 }
-
-// fn distribute_reward<'info>(ctx: &Context<EndRace<'info>>, recipient: Pubkey, amount: u64) -> Result<()> {
-//     let cpi_accounts = Transfer {
-//         from: ctx.accounts.pool_sol_account.to_account_info(),
-//         to: ctx.accounts.winner_sol_account.to_account_info(),
-//         authority: ctx.accounts.pool.to_account_info(),
-//     };
-//     let cpi_program = ctx.accounts.system_program.to_account_info();
-//     let cpi_ctx = CpiContext::new(cpi_program, cpi_accounts);
-//     anchor_lang::system_program::transfer(cpi_ctx, amount)?;
-//     Ok(())
-// }
