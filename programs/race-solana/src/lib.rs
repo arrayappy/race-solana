@@ -66,20 +66,54 @@ pub mod race_solana {
         Ok(())
     }
 
-    pub fn end_race(ctx: Context<EndRace>, winners: Vec<Pubkey>) -> Result<()> {
+    pub fn end_race(ctx: Context<EndRace>, winner_count: u8) -> Result<()> {
         let pool = &mut ctx.accounts.pool;
+        let race_pool = &ctx.accounts.race_pool;
 
         require!(pool.is_active, ErrorCode::RaceNotActive);
-        require!(!winners.is_empty(), ErrorCode::NoWinners);
-        require!(winners.len() <= pool.participants.len(), ErrorCode::TooManyWinners);
+        require!(winner_count > 0, ErrorCode::NoWinners);
+        require!(
+            winner_count as usize <= pool.participants.len(),
+            ErrorCode::TooManyWinners
+        );
 
-        // Implement reward distribution logic here
+        let total_reward = pool.entry_amount * pool.participants.len() as u64;
+        let remaining_accounts = ctx.remaining_accounts;
+
+        match winner_count {
+            1 => {
+                distribute_reward(&remaining_accounts[0], (total_reward * 90) / 100)?;
+                distribute_reward(&remaining_accounts[1], (total_reward * 10) / 100)?; // Burn wallet
+            }
+            2 => {
+                distribute_reward(&remaining_accounts[0], (total_reward * 60) / 100)?;
+                distribute_reward(&remaining_accounts[1], (total_reward * 30) / 100)?;
+                distribute_reward(&remaining_accounts[2], (total_reward * 10) / 100)?; // Burn wallet
+            }
+            _ => {
+                distribute_reward(&remaining_accounts[0], (total_reward * 50) / 100)?;
+                distribute_reward(&remaining_accounts[1], (total_reward * 25) / 100)?;
+                distribute_reward(&remaining_accounts[2], (total_reward * 15) / 100)?;
+                distribute_reward(&remaining_accounts[3], (total_reward * 10) / 100)?; // Burn wallet
+            }
+        }
 
         pool.is_active = false;
         pool.participants.clear();
 
         Ok(())
     }
+}
+
+
+fn distribute_reward(account_info: &AccountInfo, amount: u64) -> Result<()> {
+    let recipient_starting_balance = account_info.lamports();
+
+    **account_info.lamports.borrow_mut() = recipient_starting_balance
+        .checked_add(amount)
+        .ok_or(ErrorCode::OverflowError)?;
+
+    Ok(())
 }
 
 #[derive(Accounts)]
@@ -166,4 +200,14 @@ pub enum ErrorCode {
     TooManyWinners,
     #[msg("Invalid entry amount")]
     InvalidEntryAmount,
+    #[msg("Missing required account")]
+    MissingAccount,
+    #[msg("Invalid winner account")]
+    InvalidWinnerAccount,
+    #[msg("Invalid burn wallet")]
+    InvalidBurnWallet,
+    #[msg("Missing bump seed")]
+    MissingBump,
+    #[msg("Arithmetic overflow")]
+    OverflowError,
 }

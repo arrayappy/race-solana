@@ -169,5 +169,59 @@ describe('race_solana', () => {
     assert.strictEqual(player2Balance.value.uiAmount, 0.1); // 0.1 RACE tokens
   });
 
-  // Add more tests for edge cases and error conditions
+  it('Ends the race and distributes rewards', async () => {
+    // Get initial balances
+    const initialPlayer1Balance = await connection.getBalance(player1.publicKey);
+    const initialPlayer2Balance = await connection.getBalance(player2.publicKey);
+    const initialBurnWalletBalance = await connection.getBalance(burnWallet.publicKey);
+
+    // End the race with 2 winners
+    await program.methods
+      .endRace(2)
+      .accounts({
+        pool: poolAccount.publicKey,
+        racePool: racePoolAccount,
+        poolSolAccount: poolSolAccount.publicKey,
+        authority: wallet.publicKey,
+      })
+      .remainingAccounts([
+        { pubkey: player1.publicKey, isWritable: true, isSigner: false },
+        { pubkey: player2.publicKey, isWritable: true, isSigner: false },
+        { pubkey: burnWallet.publicKey, isWritable: true, isSigner: false },
+      ])
+      .rpc();
+
+    // Get final balances
+    const finalPlayer1Balance = await connection.getBalance(player1.publicKey);
+    const finalPlayer2Balance = await connection.getBalance(player2.publicKey);
+    const finalBurnWalletBalance = await connection.getBalance(burnWallet.publicKey);
+
+    // Calculate expected rewards
+    const totalReward = entryAmount.toNumber() * 2; // 2 participants
+    const expectedPlayer1Reward = (totalReward * 60) / 100;
+    const expectedPlayer2Reward = (totalReward * 30) / 100;
+    const expectedBurnWalletReward = (totalReward * 10) / 100;
+
+    // Assert balances
+    assert.strictEqual(
+      finalPlayer1Balance - initialPlayer1Balance,
+      expectedPlayer1Reward,
+      "Player 1 didn't receive the correct reward"
+    );
+    assert.strictEqual(
+      finalPlayer2Balance - initialPlayer2Balance,
+      expectedPlayer2Reward,
+      "Player 2 didn't receive the correct reward"
+    );
+    assert.strictEqual(
+      finalBurnWalletBalance - initialBurnWalletBalance,
+      expectedBurnWalletReward,
+      "Burn wallet didn't receive the correct amount"
+    );
+
+    // Check if the pool is no longer active
+    const pool = await program.account.pool.fetch(poolAccount.publicKey);
+    assert.strictEqual(pool.isActive, false, "Pool should be inactive after race ends");
+    assert.strictEqual(pool.participants.length, 0, "Pool participants should be cleared");
+  });
 });
