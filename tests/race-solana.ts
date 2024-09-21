@@ -21,8 +21,8 @@ describe('race_solana', () => {
   const program = anchor.workspace.RaceSolana as Program<RaceSolana>;
   console.log(program.programId);
 
-  let racePoolAccount: PublicKey;
-  let racePoolBump: number;
+  let raceAdminAccount: PublicKey;
+  let raceAdminBump: number;
   let burnWallet: anchor.web3.Keypair;
   let raceMint: PublicKey;
   let poolAccount: anchor.web3.Keypair;
@@ -34,9 +34,9 @@ describe('race_solana', () => {
   const player2 = anchor.web3.Keypair.generate();
 
   before(async () => {
-    // Find PDA for race pool
-    [racePoolAccount, racePoolBump] = await PublicKey.findProgramAddress(
-      [Buffer.from("race_pool")],
+    // Find PDA for race admin
+    [raceAdminAccount, raceAdminBump] = await PublicKey.findProgramAddress(
+      [Buffer.from("race_admin")],
       program.programId
     );
 
@@ -56,27 +56,27 @@ describe('race_solana', () => {
     raceMint = await createMint(
       connection,
       wallet.payer,
-      racePoolAccount,
+      raceAdminAccount,
       null,
       9 // decimals
     );
   });
 
-  it('Initializes the race pool', async () => {
+  it('Initializes the race admin', async () => {
     await program.methods
       .initialize()
       .accounts({
-        racePool: racePoolAccount,
+        raceAdmin: raceAdminAccount,
         authority: provider.publicKey,
         burnWallet: burnWallet.publicKey,
         systemProgram: SystemProgram.programId,
       })
       .rpc();
 
-    const racePool = await program.account.racePool.fetch(racePoolAccount);
+    const raceAdmin = await program.account.raceAdmin.fetch(raceAdminAccount);
 
-    assert.ok(racePool.authority.equals(wallet.publicKey));
-    assert.ok(racePool.burnWallet.equals(burnWallet.publicKey));
+    assert.ok(raceAdmin.authority.equals(wallet.publicKey));
+    assert.ok(raceAdmin.burnWallet.equals(burnWallet.publicKey));
   });
 
   it('Creates a pool', async () => {
@@ -85,7 +85,7 @@ describe('race_solana', () => {
     await program.methods
       .createPool(new anchor.BN(2), entryAmount)
       .accounts({
-        racePool: racePoolAccount,
+        raceAdmin: raceAdminAccount,
         pool: poolAccount.publicKey,
         authority: provider.publicKey,
         systemProgram: SystemProgram.programId,
@@ -126,7 +126,7 @@ describe('race_solana', () => {
         pool: poolAccount.publicKey,
         player: player1.publicKey,
         poolSolAccount: poolSolAccount.publicKey,
-        racePool: racePoolAccount,
+        raceAdmin: raceAdminAccount,
         raceMint: raceMint,
         playerRaceAccount: player1RaceAccount.address,
         systemProgram: SystemProgram.programId,
@@ -149,7 +149,7 @@ describe('race_solana', () => {
         pool: poolAccount.publicKey,
         player: player2.publicKey,
         poolSolAccount: poolSolAccount.publicKey,
-        racePool: racePoolAccount,
+        raceAdmin: raceAdminAccount,
         raceMint: raceMint,
         playerRaceAccount: player2RaceAccount.address,
         systemProgram: SystemProgram.programId,
@@ -184,7 +184,7 @@ describe('race_solana', () => {
       .endRace()
       .accounts({
         pool: poolAccount.publicKey,
-        racePool: racePoolAccount,
+        raceAdmin: raceAdminAccount,
         poolSolAccount: poolSolAccount.publicKey,
         authority: wallet.publicKey,
       })

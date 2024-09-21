@@ -8,9 +8,9 @@ pub mod race_solana {
     use super::*;
 
     pub fn initialize(ctx: Context<Initialize>) -> Result<()> {
-        let race_pool = &mut ctx.accounts.race_pool;
-        race_pool.authority = ctx.accounts.authority.key();
-        race_pool.burn_wallet = ctx.accounts.burn_wallet.key();
+        let race_admin = &mut ctx.accounts.race_admin;
+        race_admin.authority = ctx.accounts.authority.key();
+        race_admin.burn_wallet = ctx.accounts.burn_wallet.key();
         Ok(())
     }
 
@@ -53,13 +53,12 @@ pub mod race_solana {
         let cpi_accounts = token::MintTo {
             mint: ctx.accounts.race_mint.to_account_info(),
             to: ctx.accounts.player_race_account.to_account_info(),
-            authority: ctx.accounts.race_pool.to_account_info(),
+            authority: ctx.accounts.race_admin.to_account_info(),
         };
         let cpi_program = ctx.accounts.token_program.to_account_info();
         let seeds = &[
-            b"race_pool".as_ref(),
-            // &[*ctx.bumps.get("race_pool").unwrap()],
-            &[ctx.bumps.race_pool],
+            b"race_admin".as_ref(),
+            &[ctx.bumps.race_admin],
         ];
         let signer_seeds = &[&seeds[..]];
         let cpi_ctx = CpiContext::new_with_signer(cpi_program, cpi_accounts, signer_seeds);
@@ -136,10 +135,10 @@ pub struct Initialize<'info> {
         init,
         payer = authority,
         space = 8 + 32 + 32,
-        seeds = [b"race_pool"],
+        seeds = [b"race_admin"],
         bump
     )]
-    pub race_pool: Account<'info, RacePool>,
+    pub race_admin: Account<'info, RaceAdmin>,
     #[account(mut)]
     pub authority: Signer<'info>,
     /// CHECK: This is not dangerous because we don't read or write from this account
@@ -149,8 +148,8 @@ pub struct Initialize<'info> {
 
 #[derive(Accounts)]
 pub struct CreatePool<'info> {
-    #[account(mut, seeds = [b"race_pool"], bump)]
-    pub race_pool: Account<'info, RacePool>,
+    #[account(mut, seeds = [b"race_admin"], bump)]
+    pub race_admin: Account<'info, RaceAdmin>,
     // #[account(init, payer = authority, space = 8 + 8 + 32 * 100 + 1)]
     #[account(
         init,
@@ -173,8 +172,8 @@ pub struct JoinRace<'info> {
     #[account(mut)]
     /// CHECK: This is the pool's SOL account
     pub pool_sol_account: AccountInfo<'info>,
-    #[account(seeds = [b"race_pool"], bump)]
-    pub race_pool: Account<'info, RacePool>,
+    #[account(seeds = [b"race_admin"], bump)]
+    pub race_admin: Account<'info, RaceAdmin>,
     #[account(mut)]
     pub race_mint: Account<'info, Mint>,
     #[account(mut)]
@@ -185,8 +184,8 @@ pub struct JoinRace<'info> {
 
 #[derive(Accounts)]
 pub struct EndRace<'info> {
-    #[account(mut, seeds = [b"race_pool"], bump)]
-    pub race_pool: Account<'info, RacePool>,
+    #[account(mut, seeds = [b"race_admin"], bump)]
+    pub race_admin: Account<'info, RaceAdmin>,
     #[account(mut)]
     pub pool: Account<'info, Pool>,
     #[account(mut, signer)]
@@ -196,7 +195,7 @@ pub struct EndRace<'info> {
 }
 
 #[account]
-pub struct RacePool {
+pub struct RaceAdmin {
     pub authority: Pubkey,
     pub burn_wallet: Pubkey,
 }
