@@ -10,6 +10,24 @@ import {
 } from '@solana/spl-token';
 import * as assert from 'assert';
 
+// New function to create mint with custom authority
+async function createMintWithAuthority(
+  connection: anchor.web3.Connection,
+  payer: anchor.web3.Keypair,
+  mintAuthority: PublicKey,
+  decimals: number = 9
+): Promise<PublicKey> {
+  const mint = await createMint(
+    connection,
+    payer,
+    mintAuthority,
+    null,
+    decimals
+  );
+  console.log('mint', mint.toBase58());
+  return mint;
+}
+
 describe('race_solana', () => {
   anchor.setProvider(anchor.AnchorProvider.env());
 
@@ -27,6 +45,7 @@ describe('race_solana', () => {
   let raceMint: PublicKey;
   let poolAccount: anchor.web3.Keypair;
   let poolSolAccount: Keypair; // 1 const seed, 1 dynmaic seed - pool id
+  let mintAuthority: Keypair;
 
   const entryAmount = new anchor.BN(100_000_000); // 0.1 SOL in lamports
 
@@ -42,9 +61,10 @@ describe('race_solana', () => {
 
     burnWallet = anchor.web3.Keypair.generate();
     poolSolAccount = anchor.web3.Keypair.generate();
+    mintAuthority = anchor.web3.Keypair.generate();
 
-    // Airdrop some SOL to burn wallet and pool SOL account
-    for (let account of [burnWallet.publicKey, poolSolAccount.publicKey]) {
+    // Airdrop some SOL to burn wallet, pool SOL account, and mint authority
+    for (let account of [burnWallet.publicKey, poolSolAccount.publicKey, mintAuthority.publicKey]) {
       const signature = await connection.requestAirdrop(
         account,
         2 * anchor.web3.LAMPORTS_PER_SOL
@@ -52,13 +72,11 @@ describe('race_solana', () => {
       await connection.confirmTransaction(signature);
     }
 
-    // Create RACE token mint
-    raceMint = await createMint(
+    // Create RACE token mint with custom authority
+    raceMint = await createMintWithAuthority(
       connection,
       wallet.payer,
-      raceAdminAccount,
-      null,
-      9 // decimals
+      mintAuthority.publicKey
     );
   });
 
@@ -69,6 +87,7 @@ describe('race_solana', () => {
         raceAdmin: raceAdminAccount,
         authority: provider.publicKey,
         burnWallet: burnWallet.publicKey,
+        mintAuthority: mintAuthority.publicKey,
         systemProgram: SystemProgram.programId,
       })
       .rpc();
@@ -77,6 +96,7 @@ describe('race_solana', () => {
 
     assert.ok(raceAdmin.authority.equals(wallet.publicKey));
     assert.ok(raceAdmin.burnWallet.equals(burnWallet.publicKey));
+    assert.ok(raceAdmin.mintAuthority.equals(mintAuthority.publicKey));
   });
 
   it('Creates a pool', async () => {
@@ -129,10 +149,11 @@ describe('race_solana', () => {
         raceAdmin: raceAdminAccount,
         raceMint: raceMint,
         playerRaceAccount: player1RaceAccount.address,
+        mintAuthority: mintAuthority.publicKey,
         systemProgram: SystemProgram.programId,
         tokenProgram: TOKEN_PROGRAM_ID,
       })
-      .signers([player1])
+      .signers([player1, mintAuthority])
       .rpc();
 
     // Player 2 joins the race
@@ -152,10 +173,11 @@ describe('race_solana', () => {
         raceAdmin: raceAdminAccount,
         raceMint: raceMint,
         playerRaceAccount: player2RaceAccount.address,
+        mintAuthority: mintAuthority.publicKey,
         systemProgram: SystemProgram.programId,
         tokenProgram: TOKEN_PROGRAM_ID,
       })
-      .signers([player2])
+      .signers([player2, mintAuthority])
       .rpc();
 
     // Fetch the pool account to check participants

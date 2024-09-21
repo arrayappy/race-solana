@@ -11,6 +11,7 @@ pub mod race_solana {
         let race_admin = &mut ctx.accounts.race_admin;
         race_admin.authority = ctx.accounts.authority.key();
         race_admin.burn_wallet = ctx.accounts.burn_wallet.key();
+        race_admin.mint_authority = ctx.accounts.mint_authority.key();
         Ok(())
     }
 
@@ -53,15 +54,10 @@ pub mod race_solana {
         let cpi_accounts = token::MintTo {
             mint: ctx.accounts.race_mint.to_account_info(),
             to: ctx.accounts.player_race_account.to_account_info(),
-            authority: ctx.accounts.race_admin.to_account_info(),
+            authority: ctx.accounts.mint_authority.to_account_info(),
         };
         let cpi_program = ctx.accounts.token_program.to_account_info();
-        let seeds = &[
-            b"race_admin".as_ref(),
-            &[ctx.bumps.race_admin],
-        ];
-        let signer_seeds = &[&seeds[..]];
-        let cpi_ctx = CpiContext::new_with_signer(cpi_program, cpi_accounts, signer_seeds);
+        let cpi_ctx = CpiContext::new(cpi_program, cpi_accounts);
         token::mint_to(cpi_ctx, pool.entry_amount)?;
 
         pool.participants.push(player);
@@ -140,7 +136,7 @@ pub struct Initialize<'info> {
     #[account(
         init,
         payer = authority,
-        space = 8 + 32 + 32,
+        space = 8 + 32 + 32 + 32,
         seeds = [b"race_admin"],
         bump
     )]
@@ -149,6 +145,8 @@ pub struct Initialize<'info> {
     pub authority: Signer<'info>,
     /// CHECK: This is not dangerous because we don't read or write from this account
     pub burn_wallet: AccountInfo<'info>,
+    /// CHECK: This is not dangerous because we don't read or write from this account
+    pub mint_authority: AccountInfo<'info>,
     pub system_program: Program<'info, System>,
 }
 
@@ -184,6 +182,8 @@ pub struct JoinRace<'info> {
     pub race_mint: Account<'info, Mint>,
     #[account(mut)]
     pub player_race_account: Account<'info, TokenAccount>,
+    /// CHECK: This is the mint authority
+    pub mint_authority: Signer<'info>,
     pub system_program: Program<'info, System>,
     pub token_program: Program<'info, Token>,
 }
@@ -204,6 +204,7 @@ pub struct EndRace<'info> {
 pub struct RaceAdmin {
     pub authority: Pubkey,
     pub burn_wallet: Pubkey,
+    pub mint_authority: Pubkey,
 }
 
 #[account]
