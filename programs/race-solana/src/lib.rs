@@ -17,8 +17,8 @@ pub mod race_solana {
     pub fn create_pool(ctx: Context<CreatePool>, total_participants: u64, entry_amount: u64) -> Result<()> {
         let pool = &mut ctx.accounts.pool;
         require!(
-            total_participants <= 10,
-            ErrorCode::TooManyParticipants
+            total_participants > 1 && total_participants <= 10,
+            ErrorCode::InvalidParticipantCount
         );
         require!(
             [50_000_000, 100_000_000, 250_000_000, 500_000_000, 1_000_000_000].contains(&entry_amount),
@@ -71,36 +71,42 @@ pub mod race_solana {
 
     pub fn end_race<'info>(ctx: Context<'_, '_, '_, 'info, EndRace<'info>>) -> Result<()> {
         let pool = &mut ctx.accounts.pool;
-
         require!(pool.is_active, ErrorCode::RaceNotActive);
-        let total_reward = pool.entry_amount * pool.participants.len() as u64;
-        let remaining_accounts = ctx.remaining_accounts;
+        
+        let participant_count = pool.participants.len();
+        require!(participant_count > 0, ErrorCode::NoParticipants);
+        require!(
+            ctx.remaining_accounts.len() >= participant_count + 1, // +1 for burn wallet
+            ErrorCode::InsufficientRemainingAccounts
+        );
 
         let pool_sol_account = ctx.accounts.pool_sol_account.to_account_info();
         let system_program = &ctx.accounts.system_program;
+        let remaining_accounts = ctx.remaining_accounts.to_vec();
+        let total_reward = pool.entry_amount * participant_count as u64;
 
-        match pool.participants.len() {
+        match participant_count {
             0 => return Err(ErrorCode::NoWinners.into()),
             1 => {
-                transfer_sol(pool_sol_account.clone(), remaining_accounts[0].to_account_info(), system_program.to_account_info(), (total_reward * 90) / 100)?;
-                transfer_sol(pool_sol_account.clone(), remaining_accounts[1].to_account_info(), system_program.to_account_info(), (total_reward * 10) / 100)?;
+                transfer_sol(pool_sol_account.clone(), remaining_accounts[0].clone(), system_program.to_account_info(), (total_reward * 90) / 100)?;
+                transfer_sol(pool_sol_account.clone(), remaining_accounts[1].clone(), system_program.to_account_info(), (total_reward * 10) / 100)?;
             },
             2 => {
-                transfer_sol(pool_sol_account.clone(), remaining_accounts[0].to_account_info(), system_program.to_account_info(), (total_reward * 60) / 100)?;
-                transfer_sol(pool_sol_account.clone(), remaining_accounts[1].to_account_info(), system_program.to_account_info(), (total_reward * 30) / 100)?;
-                transfer_sol(pool_sol_account.clone(), remaining_accounts[2].to_account_info(), system_program.to_account_info(), (total_reward * 10) / 100)?;
+                transfer_sol(pool_sol_account.clone(), remaining_accounts[0].clone(), system_program.to_account_info(), (total_reward * 60) / 100)?;
+                transfer_sol(pool_sol_account.clone(), remaining_accounts[1].clone(), system_program.to_account_info(), (total_reward * 30) / 100)?;
+                transfer_sol(pool_sol_account.clone(), remaining_accounts[2].clone(), system_program.to_account_info(), (total_reward * 10) / 100)?;
             },
             3 => {
-                transfer_sol(pool_sol_account.clone(), remaining_accounts[0].to_account_info(), system_program.to_account_info(), (total_reward * 50) / 100)?;
-                transfer_sol(pool_sol_account.clone(), remaining_accounts[1].to_account_info(), system_program.to_account_info(), (total_reward * 25) / 100)?;
-                transfer_sol(pool_sol_account.clone(), remaining_accounts[2].to_account_info(), system_program.to_account_info(), (total_reward * 15) / 100)?;
-                transfer_sol(pool_sol_account.clone(), remaining_accounts[3].to_account_info(), system_program.to_account_info(), (total_reward * 10) / 100)?;
+                transfer_sol(pool_sol_account.clone(), remaining_accounts[0].clone(), system_program.to_account_info(), (total_reward * 50) / 100)?;
+                transfer_sol(pool_sol_account.clone(), remaining_accounts[1].clone(), system_program.to_account_info(), (total_reward * 25) / 100)?;
+                transfer_sol(pool_sol_account.clone(), remaining_accounts[2].clone(), system_program.to_account_info(), (total_reward * 15) / 100)?;
+                transfer_sol(pool_sol_account.clone(), remaining_accounts[3].clone(), system_program.to_account_info(), (total_reward * 10) / 100)?;
             },
             _ => {
-                transfer_sol(pool_sol_account.clone(), remaining_accounts[0].to_account_info(), system_program.to_account_info(), (total_reward * 50) / 100)?;
-                transfer_sol(pool_sol_account.clone(), remaining_accounts[1].to_account_info(), system_program.to_account_info(), (total_reward * 25) / 100)?;
-                transfer_sol(pool_sol_account.clone(), remaining_accounts[2].to_account_info(), system_program.to_account_info(), (total_reward * 15) / 100)?;
-                transfer_sol(pool_sol_account.clone(), remaining_accounts[3].to_account_info(), system_program.to_account_info(), (total_reward * 10) / 100)?;
+                transfer_sol(pool_sol_account.clone(), remaining_accounts[0].clone(), system_program.to_account_info(), (total_reward * 50) / 100)?;
+                transfer_sol(pool_sol_account.clone(), remaining_accounts[1].clone(), system_program.to_account_info(), (total_reward * 25) / 100)?;
+                transfer_sol(pool_sol_account.clone(), remaining_accounts[2].clone(), system_program.to_account_info(), (total_reward * 15) / 100)?;
+                transfer_sol(pool_sol_account.clone(), remaining_accounts[3].clone(), system_program.to_account_info(), (total_reward * 10) / 100)?;
             },
         }
 
@@ -219,4 +225,10 @@ pub enum ErrorCode {
     InvalidEntryAmount,
     #[msg("Too many participants")]
     TooManyParticipants,
+    #[msg("Invalid participant count")]
+    InvalidParticipantCount,
+    #[msg("No participants in the race")]
+    NoParticipants,
+    #[msg("Insufficient remaining accounts provided")]
+    InsufficientRemainingAccounts,
 }

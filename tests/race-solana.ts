@@ -229,4 +229,44 @@ describe('race_solana', () => {
     assert.strictEqual(pool.isActive, false, "Pool should be inactive after race ends");
     assert.strictEqual(pool.participants.length, 0, "Pool participants should be cleared");
   });
+  it('Fails to create a pool with invalid entry amount', async () => {
+    const invalidEntryAmount = new anchor.BN(75_000_000); // 0.075 SOL
+    const newPoolAccount = anchor.web3.Keypair.generate();
+    
+    try {
+      await program.methods
+        .createPool(new anchor.BN(2), invalidEntryAmount)
+        .accounts({
+          raceAdmin: raceAdminAccount,
+          pool: newPoolAccount.publicKey,
+          authority: provider.publicKey,
+          systemProgram: SystemProgram.programId,
+        })
+        .signers([newPoolAccount])
+        .rpc();
+      assert.fail('Should have thrown an error');
+    } catch (error) {
+      assert.ok(error.toString().includes('InvalidEntryAmount'));
+    }
+  });
+
+  it('Fails to create a pool with invalid participant count', async () => {
+    const newPoolAccount = anchor.web3.Keypair.generate();
+    
+    try {
+      await program.methods
+        .createPool(new anchor.BN(1), entryAmount)
+        .accounts({
+          raceAdmin: raceAdminAccount,
+          pool: newPoolAccount.publicKey,
+          authority: provider.publicKey,
+          systemProgram: SystemProgram.programId,
+        })
+        .signers([newPoolAccount])
+        .rpc();
+      assert.fail('Should have thrown an error');
+    } catch (error) {
+      assert.ok(error.toString().includes('InvalidParticipantCount'));
+    }
+  });
 });
