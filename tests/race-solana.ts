@@ -181,7 +181,7 @@ describe('race_solana', () => {
 
     // End the race with 2 winners
     await program.methods
-      .endRace(2)
+      .endRace()
       .accounts({
         pool: poolAccount.publicKey,
         racePool: racePoolAccount,
@@ -190,7 +190,7 @@ describe('race_solana', () => {
       })
       .remainingAccounts([
         { pubkey: player1.publicKey, isWritable: true, isSigner: false },
-        // { pubkey: player2.publicKey, isWritable: true, isSigner: false },
+        { pubkey: player2.publicKey, isWritable: true, isSigner: false },
         { pubkey: burnWallet.publicKey, isWritable: true, isSigner: false },
       ])
       .signers([poolSolAccount])
@@ -207,26 +207,26 @@ describe('race_solana', () => {
     const expectedPlayer2Reward = (totalReward * 30) / 100;
     const expectedBurnWalletReward = (totalReward * 10) / 100;
 
-    // // Assert balances
-    // assert.strictEqual(
-    //   finalPlayer1Balance - initialPlayer1Balance,
-    //   expectedPlayer1Reward,
-    //   "Player 1 didn't receive the correct reward"
-    // );
-    // assert.strictEqual(
-    //   finalPlayer2Balance - initialPlayer2Balance,
-    //   expectedPlayer2Reward,
-    //   "Player 2 didn't receive the correct reward"
-    // );
-    // assert.strictEqual(
-    //   finalBurnWalletBalance - initialBurnWalletBalance,
-    //   expectedBurnWalletReward,
-    //   "Burn wallet didn't receive the correct amount"
-    // );
+    // Assert balances
+    assert.strictEqual(
+      finalPlayer1Balance - initialPlayer1Balance,
+      expectedPlayer1Reward,
+      "Player 1 didn't receive the correct reward"
+    );
+    assert.strictEqual(
+      finalPlayer2Balance - initialPlayer2Balance,
+      expectedPlayer2Reward,
+      "Player 2 didn't receive the correct reward"
+    );
+    assert.strictEqual(
+      finalBurnWalletBalance - initialBurnWalletBalance,
+      expectedBurnWalletReward,
+      "Burn wallet didn't receive the correct amount"
+    );
 
-    // // Check if the pool is no longer active
-    // const pool = await program.account.pool.fetch(poolAccount.publicKey);
-    // assert.strictEqual(pool.isActive, false, "Pool should be inactive after race ends");
-    // assert.strictEqual(pool.participants.length, 0, "Pool participants should be cleared");
+    // Check if the pool is no longer active
+    const pool = await program.account.pool.fetch(poolAccount.publicKey);
+    assert.strictEqual(pool.isActive, false, "Pool should be inactive after race ends");
+    assert.strictEqual(pool.participants.length, 0, "Pool participants should be cleared");
   });
 });

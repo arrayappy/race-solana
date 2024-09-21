@@ -1,4 +1,4 @@
-use anchor_lang::{accounts::signer, prelude::*};
+use anchor_lang::prelude::*;
 use anchor_spl::token::{self, Token, TokenAccount, Mint};
 
 declare_id!("ATgCyKtLjQy4A2J3GGb2mvr2X3KoDPtDN6RFRLkYpmis");
@@ -70,69 +70,40 @@ pub mod race_solana {
         Ok(())
     }
 
-    pub fn end_race<'info>(ctx: Context<'_, '_, '_, 'info, EndRace<'info>>, winner_count: u8) -> Result<()> {
+    pub fn end_race<'info>(ctx: Context<'_, '_, '_, 'info, EndRace<'info>>) -> Result<()> {
         let pool = &mut ctx.accounts.pool;
-        let race_pool = &ctx.accounts.race_pool;
 
         require!(pool.is_active, ErrorCode::RaceNotActive);
-        require!(winner_count > 0, ErrorCode::NoWinners);
-        require!(
-            winner_count as usize <= pool.participants.len(),
-            ErrorCode::TooManyWinners
-        );
-
         let total_reward = pool.entry_amount * pool.participants.len() as u64;
         let remaining_accounts = ctx.remaining_accounts;
 
-        msg!("winner_count: {}", winner_count);
-        msg!("remaining_accounts: {:?}", remaining_accounts);
-        msg!("amount: {}", total_reward);
-
         let pool_sol_account = ctx.accounts.pool_sol_account.to_account_info();
-        let winner = remaining_accounts[0].to_account_info();
-        let burn_wallet = remaining_accounts[1].to_account_info();
         let system_program = &ctx.accounts.system_program;
 
-        anchor_lang::system_program::transfer(
-            CpiContext::new(
-                ctx.accounts.system_program.to_account_info(),
-                anchor_lang::system_program::Transfer {
-                    from: pool_sol_account.clone(),
-                    to: winner.to_account_info(),
-                },
-            ),
-            (total_reward * 90) / 100,
-        )?;
-
-        // send 10 to burn
-        anchor_lang::system_program::transfer(
-            CpiContext::new(
-                ctx.accounts.system_program.to_account_info(),
-                anchor_lang::system_program::Transfer {
-                    from: pool_sol_account.clone(),
-                    to: burn_wallet.to_account_info(),
-                },
-            ),
-            (total_reward * 10) / 100,
-        )?;
-
-        // match winner_count {
-        //     1 => {
-        //         distribute_reward(&remaining_accounts[0], (total_reward * 90) / 100)?;
-        //         distribute_reward(&remaining_accounts[1], (total_reward * 10) / 100)?; // Burn wallet
-        //     }
-        //     2 => {
-        //         distribute_reward(&remaining_accounts[0], (total_reward * 60) / 100)?;
-        //         distribute_reward(&remaining_accounts[1], (total_reward * 30) / 100)?;
-        //         distribute_reward(&remaining_accounts[2], (total_reward * 10) / 100)?; // Burn wallet
-        //     }
-        //     _ => {
-        //         distribute_reward(&remaining_accounts[0], (total_reward * 50) / 100)?;
-        //         distribute_reward(&remaining_accounts[1], (total_reward * 25) / 100)?;
-        //         distribute_reward(&remaining_accounts[2], (total_reward * 15) / 100)?;
-        //         distribute_reward(&remaining_accounts[3], (total_reward * 10) / 100)?; // Burn wallet
-        //     }
-        // }
+        match pool.participants.len() {
+            0 => return Err(ErrorCode::NoWinners.into()),
+            1 => {
+                transfer_sol(pool_sol_account.clone(), remaining_accounts[0].to_account_info(), system_program.to_account_info(), (total_reward * 90) / 100)?;
+                transfer_sol(pool_sol_account.clone(), remaining_accounts[1].to_account_info(), system_program.to_account_info(), (total_reward * 10) / 100)?;
+            },
+            2 => {
+                transfer_sol(pool_sol_account.clone(), remaining_accounts[0].to_account_info(), system_program.to_account_info(), (total_reward * 60) / 100)?;
+                transfer_sol(pool_sol_account.clone(), remaining_accounts[1].to_account_info(), system_program.to_account_info(), (total_reward * 30) / 100)?;
+                transfer_sol(pool_sol_account.clone(), remaining_accounts[2].to_account_info(), system_program.to_account_info(), (total_reward * 10) / 100)?;
+            },
+            3 => {
+                transfer_sol(pool_sol_account.clone(), remaining_accounts[0].to_account_info(), system_program.to_account_info(), (total_reward * 50) / 100)?;
+                transfer_sol(pool_sol_account.clone(), remaining_accounts[1].to_account_info(), system_program.to_account_info(), (total_reward * 25) / 100)?;
+                transfer_sol(pool_sol_account.clone(), remaining_accounts[2].to_account_info(), system_program.to_account_info(), (total_reward * 15) / 100)?;
+                transfer_sol(pool_sol_account.clone(), remaining_accounts[3].to_account_info(), system_program.to_account_info(), (total_reward * 10) / 100)?;
+            },
+            _ => {
+                transfer_sol(pool_sol_account.clone(), remaining_accounts[0].to_account_info(), system_program.to_account_info(), (total_reward * 50) / 100)?;
+                transfer_sol(pool_sol_account.clone(), remaining_accounts[1].to_account_info(), system_program.to_account_info(), (total_reward * 25) / 100)?;
+                transfer_sol(pool_sol_account.clone(), remaining_accounts[2].to_account_info(), system_program.to_account_info(), (total_reward * 15) / 100)?;
+                transfer_sol(pool_sol_account.clone(), remaining_accounts[3].to_account_info(), system_program.to_account_info(), (total_reward * 10) / 100)?;
+            },
+        }
 
         pool.is_active = false;
         pool.participants.clear();
@@ -141,17 +112,24 @@ pub mod race_solana {
     }
 }
 
-
-// fn distribute_reward(account_info: &AccountInfo, amount: u64) -> Result<()> {
-//     let recipient_starting_balance = account_info.lamports();
-
-//     **account_info.lamports.borrow_mut() = recipient_starting_balance
-//         .checked_add(amount)
-//         .ok_or(ErrorCode::OverflowError)?;
-
-//     Ok(())
-// }
-
+// write a common function for transfer_sol from end_race
+fn transfer_sol<'info>(
+    from: AccountInfo<'info>,
+    to: AccountInfo<'info>,
+    system_program: AccountInfo<'info>,
+    amount: u64,
+) -> Result<()> {
+    anchor_lang::system_program::transfer(
+        CpiContext::new(
+            system_program,
+            anchor_lang::system_program::Transfer {
+                from,
+                to,
+            },
+        ),
+        amount,
+    )
+}
 #[derive(Accounts)]
 pub struct Initialize<'info> {
     #[account(
@@ -238,20 +216,8 @@ pub enum ErrorCode {
     AlreadyJoined,
     #[msg("No winners provided")]
     NoWinners,
-    #[msg("Too many winners provided")]
-    TooManyWinners,
     #[msg("Invalid entry amount")]
     InvalidEntryAmount,
-    #[msg("Missing required account")]
-    MissingAccount,
-    #[msg("Invalid winner account")]
-    InvalidWinnerAccount,
-    #[msg("Invalid burn wallet")]
-    InvalidBurnWallet,
-    #[msg("Missing bump seed")]
-    MissingBump,
-    #[msg("Arithmetic overflow")]
-    OverflowError,
     #[msg("Too many participants")]
     TooManyParticipants,
 }
