@@ -1,4 +1,4 @@
-use anchor_lang::prelude::*;
+use anchor_lang::{accounts::signer, prelude::*};
 use anchor_spl::token::{self, Token, TokenAccount, Mint};
 
 declare_id!("ATgCyKtLjQy4A2J3GGb2mvr2X3KoDPtDN6RFRLkYpmis");
@@ -14,8 +14,12 @@ pub mod race_solana {
         Ok(())
     }
 
-    pub fn create_pool(ctx: Context<CreatePool>, entry_amount: u64) -> Result<()> {
+    pub fn create_pool(ctx: Context<CreatePool>, total_participants: u64, entry_amount: u64) -> Result<()> {
         let pool = &mut ctx.accounts.pool;
+        require!(
+            total_participants <= 10,
+            ErrorCode::TooManyParticipants
+        );
         require!(
             [50_000_000, 100_000_000, 250_000_000, 500_000_000, 1_000_000_000].contains(&entry_amount),
             ErrorCode::InvalidEntryAmount
@@ -66,7 +70,7 @@ pub mod race_solana {
         Ok(())
     }
 
-    pub fn end_race(ctx: Context<EndRace>, winner_count: u8) -> Result<()> {
+    pub fn end_race<'info>(ctx: Context<'_, '_, '_, 'info, EndRace<'info>>, winner_count: u8) -> Result<()> {
         let pool = &mut ctx.accounts.pool;
         let race_pool = &ctx.accounts.race_pool;
 
@@ -80,23 +84,55 @@ pub mod race_solana {
         let total_reward = pool.entry_amount * pool.participants.len() as u64;
         let remaining_accounts = ctx.remaining_accounts;
 
-        match winner_count {
-            1 => {
-                distribute_reward(&remaining_accounts[0], (total_reward * 90) / 100)?;
-                distribute_reward(&remaining_accounts[1], (total_reward * 10) / 100)?; // Burn wallet
-            }
-            2 => {
-                distribute_reward(&remaining_accounts[0], (total_reward * 60) / 100)?;
-                distribute_reward(&remaining_accounts[1], (total_reward * 30) / 100)?;
-                distribute_reward(&remaining_accounts[2], (total_reward * 10) / 100)?; // Burn wallet
-            }
-            _ => {
-                distribute_reward(&remaining_accounts[0], (total_reward * 50) / 100)?;
-                distribute_reward(&remaining_accounts[1], (total_reward * 25) / 100)?;
-                distribute_reward(&remaining_accounts[2], (total_reward * 15) / 100)?;
-                distribute_reward(&remaining_accounts[3], (total_reward * 10) / 100)?; // Burn wallet
-            }
-        }
+        msg!("winner_count: {}", winner_count);
+        msg!("remaining_accounts: {:?}", remaining_accounts);
+        msg!("amount: {}", total_reward);
+
+        let pool_sol_account = ctx.accounts.pool_sol_account.to_account_info();
+        let winner = remaining_accounts[0].to_account_info();
+        let burn_wallet = remaining_accounts[1].to_account_info();
+        let system_program = &ctx.accounts.system_program;
+
+        anchor_lang::system_program::transfer(
+            CpiContext::new(
+                ctx.accounts.system_program.to_account_info(),
+                anchor_lang::system_program::Transfer {
+                    from: pool_sol_account.clone(),
+                    to: winner.to_account_info(),
+                },
+            ),
+            (total_reward * 90) / 100,
+        )?;
+
+        // send 10 to burn
+        anchor_lang::system_program::transfer(
+            CpiContext::new(
+                ctx.accounts.system_program.to_account_info(),
+                anchor_lang::system_program::Transfer {
+                    from: pool_sol_account.clone(),
+                    to: burn_wallet.to_account_info(),
+                },
+            ),
+            (total_reward * 10) / 100,
+        )?;
+
+        // match winner_count {
+        //     1 => {
+        //         distribute_reward(&remaining_accounts[0], (total_reward * 90) / 100)?;
+        //         distribute_reward(&remaining_accounts[1], (total_reward * 10) / 100)?; // Burn wallet
+        //     }
+        //     2 => {
+        //         distribute_reward(&remaining_accounts[0], (total_reward * 60) / 100)?;
+        //         distribute_reward(&remaining_accounts[1], (total_reward * 30) / 100)?;
+        //         distribute_reward(&remaining_accounts[2], (total_reward * 10) / 100)?; // Burn wallet
+        //     }
+        //     _ => {
+        //         distribute_reward(&remaining_accounts[0], (total_reward * 50) / 100)?;
+        //         distribute_reward(&remaining_accounts[1], (total_reward * 25) / 100)?;
+        //         distribute_reward(&remaining_accounts[2], (total_reward * 15) / 100)?;
+        //         distribute_reward(&remaining_accounts[3], (total_reward * 10) / 100)?; // Burn wallet
+        //     }
+        // }
 
         pool.is_active = false;
         pool.participants.clear();
@@ -106,15 +142,15 @@ pub mod race_solana {
 }
 
 
-fn distribute_reward(account_info: &AccountInfo, amount: u64) -> Result<()> {
-    let recipient_starting_balance = account_info.lamports();
+// fn distribute_reward(account_info: &AccountInfo, amount: u64) -> Result<()> {
+//     let recipient_starting_balance = account_info.lamports();
 
-    **account_info.lamports.borrow_mut() = recipient_starting_balance
-        .checked_add(amount)
-        .ok_or(ErrorCode::OverflowError)?;
+//     **account_info.lamports.borrow_mut() = recipient_starting_balance
+//         .checked_add(amount)
+//         .ok_or(ErrorCode::OverflowError)?;
 
-    Ok(())
-}
+//     Ok(())
+// }
 
 #[derive(Accounts)]
 pub struct Initialize<'info> {
@@ -137,7 +173,13 @@ pub struct Initialize<'info> {
 pub struct CreatePool<'info> {
     #[account(mut, seeds = [b"race_pool"], bump)]
     pub race_pool: Account<'info, RacePool>,
-    #[account(init, payer = authority, space = 8 + 8 + 32 * 100 + 1)]
+    // #[account(init, payer = authority, space = 8 + 8 + 32 * 100 + 1)]
+    #[account(
+        init,
+        payer = authority,
+        space = 8 + std::mem::size_of::<Pool>() + (2 * 32) as usize,
+        signer,
+    )]
     pub pool: Account<'info, Pool>,
     #[account(mut)]
     pub authority: Signer<'info>,
@@ -169,7 +211,7 @@ pub struct EndRace<'info> {
     pub race_pool: Account<'info, RacePool>,
     #[account(mut)]
     pub pool: Account<'info, Pool>,
-    #[account(mut)]
+    #[account(mut, signer)]
     /// CHECK: This is the pool's SOL account
     pub pool_sol_account: AccountInfo<'info>,
     pub system_program: Program<'info, System>,
@@ -210,4 +252,6 @@ pub enum ErrorCode {
     MissingBump,
     #[msg("Arithmetic overflow")]
     OverflowError,
+    #[msg("Too many participants")]
+    TooManyParticipants,
 }
