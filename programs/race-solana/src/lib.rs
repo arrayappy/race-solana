@@ -28,6 +28,7 @@ pub mod race_solana {
         pool.entry_amount = entry_amount;
         pool.participants = Vec::new();
         pool.is_active = true;
+        pool.authority = ctx.accounts.authority.key();
         Ok(())
     }
 
@@ -70,7 +71,19 @@ pub mod race_solana {
         require!(pool.is_active, ErrorCode::RaceNotActive);
         
         let participant_count = pool.participants.len();
-        require!(participant_count > 0, ErrorCode::NoParticipants);
+        if participant_count == 0 {
+            let refund_amount = pool.entry_amount;
+            transfer_sol(
+                ctx.accounts.pool_sol_account.to_account_info(),
+                ctx.accounts.authority.to_account_info(),
+                ctx.accounts.system_program.to_account_info(),
+                refund_amount
+            )?;
+            
+            pool.is_active = false;
+            return Ok(());
+        }
+
         require!(
             ctx.remaining_accounts.len() >= participant_count + 1, // +1 for burn wallet
             ErrorCode::InsufficientRemainingAccounts
@@ -154,12 +167,12 @@ pub struct Initialize<'info> {
 pub struct CreatePool<'info> {
     #[account(mut, seeds = [b"race_admin"], bump)]
     pub race_admin: Account<'info, RaceAdmin>,
-    // #[account(init, payer = authority, space = 8 + 8 + 32 * 100 + 1)]
     #[account(
         init,
         payer = authority,
         space = 8 + std::mem::size_of::<Pool>() + (2 * 32) as usize,
-        signer,
+        seeds = [b"pool", authority.key().as_ref()],
+        bump
     )]
     pub pool: Account<'info, Pool>,
     #[account(mut)]
@@ -169,7 +182,7 @@ pub struct CreatePool<'info> {
 
 #[derive(Accounts)]
 pub struct JoinRace<'info> {
-    #[account(mut)]
+    #[account(mut, seeds = [b"pool", pool.authority.as_ref()], bump)]
     pub pool: Account<'info, Pool>,
     #[account(mut)]
     pub player: Signer<'info>,
@@ -192,11 +205,14 @@ pub struct JoinRace<'info> {
 pub struct EndRace<'info> {
     #[account(mut, seeds = [b"race_admin"], bump)]
     pub race_admin: Account<'info, RaceAdmin>,
-    #[account(mut)]
+    #[account(mut, seeds = [b"pool", pool.authority.as_ref()], bump)]
     pub pool: Account<'info, Pool>,
-    #[account(mut, signer)]
+    #[account(mut)]
     /// CHECK: This is the pool's SOL account
     pub pool_sol_account: AccountInfo<'info>,
+    #[account(mut)]
+    /// CHECK: This is the authority
+    pub authority: AccountInfo<'info>,
     pub system_program: Program<'info, System>,
 }
 
@@ -212,6 +228,7 @@ pub struct Pool {
     pub entry_amount: u64,
     pub participants: Vec<Pubkey>,
     pub is_active: bool,
+    pub authority: Pubkey,
 }
 
 #[error_code]

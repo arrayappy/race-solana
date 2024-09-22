@@ -43,8 +43,9 @@ describe('race_solana', () => {
   let raceAdminBump: number;
   let burnWallet: anchor.web3.Keypair;
   let raceMint: PublicKey;
-  let poolAccount: anchor.web3.Keypair;
-  let poolSolAccount: Keypair; // 1 const seed, 1 dynmaic seed - pool id
+  let poolAccount: PublicKey;
+  let poolBump: number;
+  let poolSolAccount: Keypair;
   let mintAuthority: Keypair;
 
   const entryAmount = new anchor.BN(100_000_000); // 0.1 SOL in lamports
@@ -78,6 +79,12 @@ describe('race_solana', () => {
       wallet.payer,
       mintAuthority.publicKey
     );
+
+    // Find PDA for pool account
+    [poolAccount, poolBump] = await PublicKey.findProgramAddress(
+      [Buffer.from("pool"), wallet.publicKey.toBuffer()],
+      program.programId
+    );
   });
 
   it('Initializes the race admin', async () => {
@@ -100,26 +107,24 @@ describe('race_solana', () => {
   });
 
   it('Creates a pool', async () => {
-    poolAccount = anchor.web3.Keypair.generate();
-
     await program.methods
       .createPool(new anchor.BN(2), entryAmount)
       .accounts({
         raceAdmin: raceAdminAccount,
-        pool: poolAccount.publicKey,
+        pool: poolAccount,
         authority: provider.publicKey,
         systemProgram: SystemProgram.programId,
       })
-      .signers([poolAccount])
       .rpc();
 
-    const pool = await program.account.pool.fetch(poolAccount.publicKey);
+    const pool = await program.account.pool.fetch(poolAccount);
 
     console.log(pool.participants.map((p) => p.toBase58()));
 
     assert.ok(pool.entryAmount.eq(entryAmount));
     assert.ok(pool.isActive);
     assert.strictEqual(pool.participants.length, 0);
+    assert.ok(pool.authority.equals(provider.publicKey));
   });
 
   it('Players join the race', async () => {
@@ -143,7 +148,7 @@ describe('race_solana', () => {
     await program.methods
       .joinRace()
       .accounts({
-        pool: poolAccount.publicKey,
+        pool: poolAccount,
         player: player1.publicKey,
         poolSolAccount: poolSolAccount.publicKey,
         raceAdmin: raceAdminAccount,
@@ -167,7 +172,7 @@ describe('race_solana', () => {
     await program.methods
       .joinRace()
       .accounts({
-        pool: poolAccount.publicKey,
+        pool: poolAccount,
         player: player2.publicKey,
         poolSolAccount: poolSolAccount.publicKey,
         raceAdmin: raceAdminAccount,
@@ -181,7 +186,7 @@ describe('race_solana', () => {
       .rpc();
 
     // Fetch the pool account to check participants
-    const pool = await program.account.pool.fetch(poolAccount.publicKey);
+    const pool = await program.account.pool.fetch(poolAccount);
     console.log(pool.participants.map((p) => p.toBase58()));
     assert.strictEqual(pool.participants.length, 2);
     assert.ok(pool.participants[0].equals(player1.publicKey));
@@ -205,7 +210,7 @@ describe('race_solana', () => {
     await program.methods
       .endRace()
       .accounts({
-        pool: poolAccount.publicKey,
+        pool: poolAccount,
         raceAdmin: raceAdminAccount,
         poolSolAccount: poolSolAccount.publicKey,
         authority: wallet.publicKey,
@@ -247,24 +252,26 @@ describe('race_solana', () => {
     );
 
     // Check if the pool is no longer active
-    const pool = await program.account.pool.fetch(poolAccount.publicKey);
+    const pool = await program.account.pool.fetch(poolAccount);
     assert.strictEqual(pool.isActive, false, "Pool should be inactive after race ends");
     assert.strictEqual(pool.participants.length, 0, "Pool participants should be cleared");
   });
   it('Fails to create a pool with invalid entry amount', async () => {
     const invalidEntryAmount = new anchor.BN(75_000_000); // 0.075 SOL
-    const newPoolAccount = anchor.web3.Keypair.generate();
+    const [newPoolAccount] = await PublicKey.findProgramAddress(
+      [Buffer.from("pool"), wallet.publicKey.toBuffer()],
+      program.programId
+    );
     
     try {
       await program.methods
         .createPool(new anchor.BN(2), invalidEntryAmount)
         .accounts({
           raceAdmin: raceAdminAccount,
-          pool: newPoolAccount.publicKey,
+          pool: newPoolAccount,
           authority: provider.publicKey,
           systemProgram: SystemProgram.programId,
         })
-        .signers([newPoolAccount])
         .rpc();
       assert.fail('Should have thrown an error');
     } catch (error) {
@@ -273,22 +280,83 @@ describe('race_solana', () => {
   });
 
   it('Fails to create a pool with invalid participant count', async () => {
-    const newPoolAccount = anchor.web3.Keypair.generate();
+    const [newPoolAccount] = await PublicKey.findProgramAddress(
+      [Buffer.from("pool"), wallet.publicKey.toBuffer()],
+      program.programId
+    );
     
     try {
       await program.methods
         .createPool(new anchor.BN(1), entryAmount)
         .accounts({
           raceAdmin: raceAdminAccount,
-          pool: newPoolAccount.publicKey,
+          pool: newPoolAccount,
           authority: provider.publicKey,
           systemProgram: SystemProgram.programId,
         })
-        .signers([newPoolAccount])
         .rpc();
       assert.fail('Should have thrown an error');
     } catch (error) {
       assert.ok(error.toString().includes('InvalidParticipantCount'));
     }
+  });
+
+  it('Refunds the pool creator when nobody joined the race', async () => {
+    // Create a new pool
+    const [newPoolAccount, newPoolBump] = await PublicKey.findProgramAddress(
+      [Buffer.from("pool"), provider.publicKey.toBuffer()],
+      program.programId
+    );
+
+    const newPoolSolAccount = anchor.web3.Keypair.generate();
+    await connection.requestAirdrop(newPoolSolAccount.publicKey, 2 * anchor.web3.LAMPORTS_PER_SOL);
+
+    await program.methods
+      .createPool(new anchor.BN(2), entryAmount)
+      .accounts({
+        raceAdmin: raceAdminAccount,
+        pool: newPoolAccount,
+        authority: provider.publicKey,
+        systemProgram: SystemProgram.programId,
+      })
+      .rpc();
+
+    // Get initial balances
+    const initialAuthorityBalance = await connection.getBalance(provider.publicKey);
+    const initialPoolSolBalance = await connection.getBalance(newPoolSolAccount.publicKey);
+
+    // End the race with no participants
+    await program.methods
+      .endRace()
+      .accounts({
+        pool: newPoolAccount,
+        raceAdmin: raceAdminAccount,
+        poolSolAccount: newPoolSolAccount.publicKey,
+        authority: provider.publicKey,
+        systemProgram: SystemProgram.programId,
+      })
+      .signers([newPoolSolAccount])
+      .rpc();
+
+    // Get final balances
+    const finalAuthorityBalance = await connection.getBalance(provider.publicKey);
+    const finalPoolSolBalance = await connection.getBalance(newPoolSolAccount.publicKey);
+
+    // Assert balances
+    assert.strictEqual(
+      finalAuthorityBalance - initialAuthorityBalance,
+      entryAmount.toNumber(),
+      "Pool creator didn't receive the correct refund"
+    );
+    assert.strictEqual(
+      initialPoolSolBalance - finalPoolSolBalance,
+      entryAmount.toNumber(),
+      "Pool SOL account balance didn't decrease correctly"
+    );
+
+    // Check if the pool is no longer active
+    const pool = await program.account.pool.fetch(newPoolAccount);
+    assert.strictEqual(pool.isActive, false, "Pool should be inactive after refund");
+    assert.strictEqual(pool.participants.length, 0, "Pool participants should be empty");
   });
 });
